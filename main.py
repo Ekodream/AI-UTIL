@@ -7,7 +7,8 @@ import argparse
 from pathlib import Path
 from openai import OpenAI
 from screenshoter import Screenshoter
-
+from eventexe import EventExecutor
+import threading
 
 def image_to_data_url(path: str) -> str:
     with open(path, 'rb') as f:
@@ -31,7 +32,8 @@ def call_model_generate_events(image_path: str,
                                output_file: str,
                                model: str = 'qwen3-vl-plus',
                                api_key: str | None = None,
-                               base_url: str | None = None):
+                               base_url: str | None = None,
+                               user_text: str | None = None):
     """Call the large model with the screenshot (as data URL) and save returned events JSON to output_file.
 
     The model is instructed to return only a JSON array describing the sequence of actions.
@@ -49,22 +51,26 @@ def call_model_generate_events(image_path: str,
         "数组中的每个元素代表一个操作事件，格式如下(示例)：\n"
         "[\n"
         "  {\n"
-        "    \"type\": \"mouse\",            // 'mouse' 或 'key' 或 'combo'\n"
-        "    \"position\": [0.5, 0.5],         // 鼠标位置（相对屏幕，0-1），mouse类型必需\n"
-        "    \"button\": \"Button.left\"    // 鼠标按键，mouse类型可选\n"
+        "    \"type\": \"mouse\",            // 'mouse' 或 'key'\n"
+        "    \"button\": \"Button.left\"    // 按键(键盘或鼠标)\n"
+        "    \"position\": [0.5000, 0.5000],         // 鼠标位置(相对位置坐标,范围为0-1)，仅mouse类型必需\n"
         "  }\n"
         "]"
     )
 
+    # Build multimodal user content: image + base instruction + optional user description
     user_message = [
         {"type": "image_url", "image_url": {"url": data_url}},
         {"type": "text", "text": (
             "请根据上面的截图识别需要执行的操作并以事件数组形式返回。\n"
             "严格只返回 JSON 数组，遵守上面的字段说明。\n"
-            "如果需要输入文本，请产生 type='key' 的事件，data 字段内包含 'text' 字段，或使用 'combo' 表示修饰键组合。\n"
+            "如果需要输入文本，请产生 type='key' 的事件，data 字段内包含 'text' 字段。\n"
             "不要输出任何非 JSON 内容。"
         )}
     ]
+    if user_text:
+        # append the user's natural-language request as a separate text block
+        user_message.append({"type": "text", "text": user_text})
 
     resp = client.chat.completions.create(
         model=model,
@@ -110,16 +116,39 @@ def main():
     p.add_argument('--model', default='qwen3-vl-plus', help='模型名称')
     p.add_argument('--api-key', default=None, help='API Key，默认使用环境变量')
     p.add_argument('--base-url', default=None, help='API Base URL，可选')
-    p.add_argument('--screenshot-dir', default='./json', help='截图保存目录')
+    p.add_argument('--screenshot-dir', default='./figures', help='截图保存目录')
+    p.add_argument('--prompt', '-p', default=None, help='用户的需求描述；若为空将进入交互式输入')
     args = p.parse_args()
 
     shooter = Screenshoter()
     img_path = shooter.take_screenshot_dir(basename='screenshot', directory=args.screenshot_dir)
     print('截图保存到:', img_path)
 
+    # get user's requirement: from CLI arg or interactive input
+    prompt_text = args.prompt
+    if not prompt_text:
+        try:
+            prompt_text = input('请输入你的需求描述，按 Enter 发送：')
+        except EOFError:
+            prompt_text = ''
+
     url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    out_path = call_model_generate_events(img_path, args.out, model=args.model, api_key=args.api_key, base_url=url)
+    out_path = call_model_generate_events(img_path, args.out, model=args.model, api_key=args.api_key, base_url=url, user_text=prompt_text)
     print('事件已保存到:', out_path)
+
+    # Execute the control sequence in json file (one full pass)
+    exe = EventExecutor()
+    events = exe.load(out_path)
+    print(f'已解析 {len(events)} 个事件，预览前 3 个:', events[:3])
+    confirm = input('确认执行上述事件序列吗？输入 y 回车执行，其他取消：').strip().lower()
+    if confirm == 'y':
+        try:
+            exe.execute(events)
+        finally:
+            pass
+        print('执行完成或已停止。')
+    else:
+        print('已取消执行。')
 
 
 if __name__ == '__main__':
