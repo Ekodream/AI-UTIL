@@ -8,4 +8,4 @@
 
 （需要做到翻页，截屏等功能，但完成较简单，因为按键的位置是固定的）
 
-3.将截屏信息发给VLM(如Qwen3-VL)，调用VLM的api并输出VLM的回复(提前写好固定的prommpt)
+3.将截屏信息发给VLM(如Qwen3-VL)，调用VLM的api并输出VLM的回复(提前写好固定的prompt)
