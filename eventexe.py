@@ -1,73 +1,107 @@
-"""主执行脚本：
+# Class for executing events, reading from a json file and processing them.
 
-功能：
-- 读取用户自然语言（从命令行参数）
-- 截取屏幕并保存
-- 假设调用大模型 API（此处用占位函数）将截图 + 自然语言转为动作序列 JSON
-- 将 JSON 写入文件并调用 events.execute_events 执行
-
-注：真实集成模型接口需替换 placeholder 的实现。
-"""
-import os
-import sys
-import json
 import time
-import argparse
-from screenshoter import Screenshoter
-import events
+import json
+from pathlib import Path
+from pynput import mouse, keyboard
+from .core import get_screen_size, parse_recorded_key, keyboard_controller, mouse_controller
 
+class EventExecutor:
+    def __init__(self):
+        pass
 
-def placeholder_infer_actions_from_image_and_text(image_path: str, user_text: str):
-    """占位函数：根据截图与用户描述生成动作序列。
-    真正的实现应调用大模型 API（例如 OpenAI 或厂商提供的多模态模型），并解析返回的操作 JSON。
-    这里返回一个示例序列用于演示。
-    """
-    # 简单示例：打开开始菜单、输入文本、回车（注意：坐标为示例）
-    return [
-        {'type': 'wait', 'seconds': 0.5},
-        {'type': 'move', 'x': 50, 'y': 1050, 'duration': 0.2},
-        {'type': 'click', 'x': 50, 'y': 1050, 'button': 'left'},
-        {'type': 'wait', 'seconds': 0.3},
-        {'type': 'type_text', 'text': user_text, 'interval': 0.03},
-        {'type': 'wait', 'seconds': 0.2},
-        {'type': 'hotkey', 'keys': ['enter']}
-    ]
-
-
-def save_actions(actions, path: str):
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump({'events': actions}, f, ensure_ascii=False, indent=2)
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--text', '-t', help='用自然语言描述你想执行的操作', required=True)
-    parser.add_argument('--out', '-o', help='动作 JSON 输出路径', default='./json/actions.json')
-    parser.add_argument('--dry', action='store_true', help='仅生成并打印动作，不实际执行')
-    args = parser.parse_args()
-
-    s = Screenshoter()
-    print('正在截取屏幕...')
-    img_path = s.take_screenshot_dir(basename='screencap', directory='./json')
-    print('截图保存到', img_path)
-
-    print('调用模型（占位）生成动作序列...')
-    actions = placeholder_infer_actions_from_image_and_text(img_path, args.text)
-    print('生成动作：', actions)
-
-    save_actions(actions, args.out)
-    print('已保存动作到', args.out)
-
-    if args.dry:
-        print('干运行，退出')
-        return
-
-    print('开始执行动作（3 秒后开始，可通过 Ctrl+C 取消）...')
-    time.sleep(3)
-    results = events.execute_events(actions, dry_run=False)
-    print('执行结果：', results)
-
-
-if __name__ == '__main__':
-    main()
+    def load(self, filename: str | None = None):
+        # Determine target file: prefer provided filename, else default to package/json/events.json
+        if filename is None:
+            pkg_dir = Path(__file__).resolve().parent
+            project_root = pkg_dir.parent
+            filename = str(project_root / 'json' / 'events.json')
+        else:
+            p = Path(filename)
+            if not p.exists():
+                # try relative to project root (package parent)
+                pkg_dir = Path(__file__).resolve().parent
+                project_root = pkg_dir.parent
+                alt = project_root / filename
+                if alt.exists():
+                    filename = str(alt)
+                else:
+                    # try project_root/json/events.json
+                    alt2 = project_root / 'json' / 'events.json'
+                    if alt2.exists():
+                        filename = str(alt2)
+                    else:
+                        raise FileNotFoundError(f"Record file not found: {filename}")
+        with open(filename, 'r', encoding='utf-8') as f:
+            return json.load(f)
+        
+    def execute(self, events, stop_event=None):
+        running = True
+        while running:
+            for e in events:
+                if stop_event is not None and stop_event.is_set():
+                    running = False
+                    break
+                
+                if e['type'] == 'key':
+                    k = e['key']
+                    pressed = e['pressed']
+                    try:
+                        kobj = getattr(keyboard.Key, k.split('.')[-1])
+                    except Exception:
+                        kobj = k
+                    if pressed:
+                        keyboard_controller.press(kobj)
+                    else:
+                        keyboard_controller.release(kobj)
+                elif e['type'] == 'combo':
+                    mods = e.get('modifiers', [])
+                    key_str = e.get('key')
+                    mod_objs = []
+                    for m in mods:
+                        try:
+                            mo = getattr(keyboard.Key, m.split('.')[-1])
+                        except Exception:
+                            mo = None
+                        if mo is not None:
+                            mod_objs.append(mo)
+                            keyboard_controller.press(mo)
+                    kobj = parse_recorded_key(key_str)
+                    # map control chars back
+                    if isinstance(kobj, str) and len(kobj) == 1 and ord(kobj) < 32:
+                        code = ord(kobj)
+                        if 1 <= code <= 26:
+                            kobj = chr(code + 96)
+                        else:
+                            vk = e.get('vk')
+                            if vk:
+                                try:
+                                    kobj = keyboard.KeyCode.from_vk(vk)
+                                except Exception:
+                                    pass
+                    try:
+                        keyboard_controller.press(kobj)
+                        keyboard_controller.release(kobj)
+                    except Exception:
+                        pass
+                    for mo in reversed(mod_objs):
+                        try:
+                            keyboard_controller.release(mo)
+                        except Exception:
+                            pass
+                elif e['type'] == 'mouse':
+                    nx, ny = e['position']
+                    cw, ch = get_screen_size()
+                    x = int(max(0, min(cw - 1, round(nx * cw))))
+                    y = int(max(0, min(ch - 1, round(ny * ch))))
+                    mouse_controller.position = (x, y)
+                    # small delay to ensure OS moved the mouse
+                    time.sleep(0.02)
+                    try:
+                        button = getattr(mouse.Button, e['button'].split('.')[-1])
+                    except Exception:
+                        button = mouse.Button.left
+                    mouse_controller.click(button)
+                    
+            if stop_event is not None and stop_event.is_set():
+                break
