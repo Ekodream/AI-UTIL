@@ -90,8 +90,15 @@ def analyze_images_with_ai(custom_prompt=None):
     html_dir = "html"
     os.makedirs(html_dir, exist_ok=True)
     
+    # 从环境变量获取API Key
+    api_key = os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        print("❌ 未找到环境变量 DASHSCOPE_API_KEY，请设置后重试。")
+        print("💡 设置方法：在系统环境变量中添加 DASHSCOPE_API_KEY=你的API密钥")
+        return
+    
     client = OpenAI(
-        api_key="sk-e80d1c4eec44443291dcc5191271d5c1",  # ⚠️ 请替换为你自己的 API Key
+        api_key=api_key,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
 
