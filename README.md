@@ -6,7 +6,7 @@ $env:DASHSCOPE_API_KEY = "your_api_key_here"
 
 2. 运行脚本
 ```
-python main.py
+python youngustc.py
 ```
 
 3. 使用案例
@@ -17,4 +17,4 @@ python main.py
 
 （需要做到翻页，截屏等功能，但完成较简单，因为按键的位置是固定的）
 
-3.将截屏信息发给VLM(如Qwen3-VL)，调用VLM的api并输出VLM的回复(提前写好固定的prommpt)
+3.将截屏信息发给VLM(如Qwen3-VL-Plus)，调用VLM的api并输出VLM的回复(固定prompt+用户自定义prompt)
