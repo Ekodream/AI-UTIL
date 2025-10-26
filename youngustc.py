@@ -4,8 +4,23 @@ import numpy as np
 import time
 import os
 import base64
+import shutil
 from PIL import Image
 from openai import OpenAI
+
+# ============================================
+# 零、初始化
+# ============================================
+def clear_folder(folder_path):
+    """清空文件夹中的所有内容"""
+    if os.path.exists(folder_path):
+        # 删除文件夹及其所有内容
+        shutil.rmtree(folder_path)
+        # 重新创建空文件夹
+        os.makedirs(folder_path)
+        print(f"✅ 文件夹 {folder_path} 已清空")
+    else:
+        print(f"⚠️ 文件夹 {folder_path} 不存在")
 
 # ============================================
 # 一、截图与翻页部分
@@ -215,6 +230,7 @@ def main():
         choice = input("\n请输入选项 (1-4): ").strip()
         
         if choice == "1":
+            clear_folder("image")
             print("程序将在 3 秒后开始截图，请切换到需要截图的窗口...")
             time.sleep(3)
             capture_all_pages()
