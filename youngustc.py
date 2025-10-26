@@ -4,8 +4,24 @@ import numpy as np
 import time
 import os
 import base64
+import shutil
+
 from PIL import Image
 from openai import OpenAI
+
+# ============================================
+# 零、初始化
+# ============================================
+def clear_folder(folder_path):
+    """清空文件夹中的所有内容"""
+    if os.path.exists(folder_path):
+        # 删除文件夹及其所有内容
+        shutil.rmtree(folder_path)
+        # 重新创建空文件夹
+        os.makedirs(folder_path)
+        print(f"✅ 文件夹 {folder_path} 已清空")
+    else:
+        print(f"⚠️ 文件夹 {folder_path} 不存在")
 
 # ============================================
 # 一、截图与翻页部分
@@ -84,110 +100,128 @@ def capture_all_pages():
 # ============================================
 # 二、AI图片分析部分
 # ============================================
+import os
+import base64
+import time
+from openai import OpenAI
+from datetime import datetime
+import webbrowser  # ✅ 新增模块，用于自动打开文件
+
 def analyze_images_with_ai(custom_prompt=None):
-    """从 image/ 文件夹读取所有图片并一次性发给 AI 分析，生成HTML表格"""
-    # 创建html输出目录
-    html_dir = "html"
-    os.makedirs(html_dir, exist_ok=True)
+    """从 image/ 文件夹读取所有图片并一次性发给 AI 分析，生成 Markdown 表格并自动打开"""
+    # 创建markdown输出目录
+    md_dir = "markdown"
+    os.makedirs(md_dir, exist_ok=True)
+    
+    # 从环境变量获取API key
+    api_key = os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        print("❌ 错误：未找到环境变量 DASHSCOPE_API_KEY")
+        print("💡 请设置环境变量：")
+        print("   Windows: set DASHSCOPE_API_KEY=你的API密钥")
+        print("   Linux/Mac: export DASHSCOPE_API_KEY=你的API密钥")
+        return
     
     client = OpenAI(
-        api_key="sk-e80d1c4eec44443291dcc5191271d5c1",  # ⚠️ 请替换为你自己的 API Key
+        api_key=api_key,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
 
-    image_files = sorted([f for f in os.listdir(SAVE_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+    # 获取所有截图文件
+    image_files = sorted([
+        f for f in os.listdir("image") if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+    ])
     if not image_files:
         print("❌ 没有找到图片，请先运行截图部分。")
         return
 
     print(f"📸 检测到 {len(image_files)} 张图片，开始批量分析...\n")
 
-    # 构建消息内容，包含所有图片
+    # 构建 AI 输入内容
     content_list = []
-    
-    # 添加所有图片
     for i, img_name in enumerate(image_files):
-        img_path = os.path.join(SAVE_DIR, img_name)
+        img_path = os.path.join("image", img_name)
         with open(img_path, "rb") as f:
             img_base64 = base64.b64encode(f.read()).decode("utf-8")
-        
         content_list.append({
             "type": "image_url",
             "image_url": {"url": "data:image/png;base64," + img_base64}
         })
         print(f"📷 已加载第 {i+1} 张图片：{img_name}")
 
-    prompt_text = f"""这是2025年中国科学技术大学活动发布平台的界面，共{len(image_files)}张图片。
-        请根据要求分析图片中的活动信息，并生成一个完整的HTML页面，内容为表格形式。
+    # ===============================
+    # 让 AI 输出 Markdown 而非 HTML
+    # ===============================
+    prompt_text = f"""这些图片是中国科学技术大学活动发布平台的截图（共 {len(image_files)} 张）。
+请分析每张图片中的活动信息，并生成一份.md 即Markdown格式的表格。
 
-        基本要求：
-        1. 生成完整的HTML文档结构（包含<!DOCTYPE html>, <html>, <head>, <body>等标签）
-        2. 除了表格外无其他内容
-        3. 在<head>中添加合适的CSS样式，让表格美观（边框、颜色、字体等）
-        4. 表格列包含：角标 | 活动名称 | 组织方 | 报名截止时间
-        5. 识别每个活动旁的"德""智""体""美""劳"五种角标并在表格中体现
-        """
+要求如下：
+1. 输出格式为纯Markdown表格（| 角标 | 活动名称 | 组织方 | 报名截止时间 |）
+2. 表格中严格识别每个活动对应的“德”“智”“体”“美”“劳”角标，严格识别角标!!!严格识别角标!!!
+3. 请严格分析各种活动的角标信息，不要全部输出“”
+4. 最后请输出一段“共X个活动”的总结
+5. 以时间顺序排序
+6. 如果存在两个活动时间上可能有冲突(指时间相差小于或等于两小时)，请在最下方将两个活动单独列出来，提醒用户注意时间冲突。
+7. 请确保Markdown语法正确，表格对齐美观。
+8. 不要包含HTML、CSS或多余说明
+"""
 
-    # 添加文本提示（支持自定义prompt）
+    # 支持自定义提示
     if custom_prompt:
-        prompt_text = prompt_text + "\n\n" \
-            + "自定义要求：" + custom_prompt \
-            + "\n请结合基本要求和自定义要求生成相应的HTML代码。"
-        print(f"🔧 使用自定义提示词...")
-    
-    content_list.append({
-        "type": "text",
-        "text": prompt_text
-    })
+        prompt_text += "\n\n用户补充要求：\n" + custom_prompt
+        print("🔧 使用自定义提示词。")
+
+    content_list.append({"type": "text", "text": prompt_text})
 
     print(f"🧠 正在一次性分析 {len(image_files)} 张图片...")
-    
+
+    # 调用 AI 模型
     completion = client.chat.completions.create(
-        model="qwen3-vl-flash",
-        messages=[
-            {
-                "role": "user",
-                "content": content_list
-            }
-        ],
+        model="qwen3-vl-plus",
+        messages=[{"role": "user", "content": content_list}],
         stream=False,
-        extra_body={
-            "enable_thinking": False,
-            "thinking_budget": 81920
-        },
+        extra_body={"enable_thinking": False, "thinking_budget": 81920},
     )
 
-    print("=" * 50 + " 生成HTML文件 " + "=" * 50)
+    print("=" * 50 + " 生成 Markdown 文件 " + "=" * 50)
 
-    # 兼容 Qwen 返回格式（可能是 str 或 list）
+    # 解析 AI 返回内容
     content = completion.choices[0].message.content
-    html_content = ""
-    
+    markdown_content = ""
     if isinstance(content, str):
-        html_content = content
+        markdown_content = content
     elif isinstance(content, list):
         for part in content:
             if isinstance(part, dict) and part.get("text"):
-                html_content += part["text"]
-    
-    if html_content:
-        # 生成HTML文件名（包含时间戳）
-        from datetime import datetime
+                markdown_content += part["text"]
+
+    # 写入 markdown 文件
+    if markdown_content:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        html_filename = os.path.join(html_dir, f"activities_{timestamp}.html")
-        
-        # 保存HTML文件
-        with open(html_filename, "w", encoding="utf-8") as f:
-            f.write(html_content)
-        
-        print(f"✅ HTML文件已生成：{html_filename}")
-        print(f"📖 请用浏览器打开查看活动汇总表格")
+        md_filename = os.path.join(md_dir, f"activities_{timestamp}.md")
+
+        with open(md_filename, "w", encoding="utf-8") as f:
+            f.write(markdown_content)
+
+        print(f"✅ Markdown 文件已生成：{md_filename}")
+
+        # ✅ 自动打开Markdown文件
+        try:
+            print("📖 正在打开文件...")
+            if os.name == 'nt':  # Windows
+                os.startfile(md_filename)
+            elif os.name == 'posix':  # macOS / Linux
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                os.system(f"{opener} '{md_filename}'")
+            else:
+                webbrowser.open(md_filename)
+        except Exception as e:
+            print(f"⚠️ 无法自动打开文件：{e}")
+            print(f"请手动打开 {md_filename}")
     else:
-        print("❌ AI未返回有效的HTML内容")
+        print("❌ AI 未返回有效内容")
 
     print("\n✅ 批量图片分析完成！")
-
-
 
 # ============================================
 # 三、主程序入口
@@ -201,13 +235,14 @@ def main():
     while True:
         print("\n请选择操作：")
         print("1. 自动截图并翻页")
-        print("2. 使用默认提示词分析图片并生成HTML")
-        print("3. 使用自定义提示词分析图片并生成HTML")
+        print("2. 使用默认提示词分析图片并生成markdown")
+        print("3. 使用自定义提示词分析图片并生成markdown")
         print("4. 退出程序")
         
         choice = input("\n请输入选项 (1-4): ").strip()
         
         if choice == "1":
+            clear_folder("image")
             print("程序将在 3 秒后开始截图，请切换到需要截图的窗口...")
             time.sleep(3)
             capture_all_pages()
